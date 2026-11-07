@@ -1,0 +1,15 @@
+# Compiled programs
+/wechat-adapter
+/probe
+
+# Personal data must never be committed
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.jsonl
+*.csv
+images/
+export/
+
+.DS_Store
