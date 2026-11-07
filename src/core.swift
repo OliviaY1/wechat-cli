@@ -1,4 +1,4 @@
-// Pure logic with no UI or disk access, covered by `wechat-adapter selftest`.
+// Pure logic with no UI or disk access, covered by `wechat-cli selftest`.
 import CryptoKit
 import Foundation
 

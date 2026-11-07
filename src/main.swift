@@ -1,4 +1,4 @@
-// wechat-adapter: local CLI for any chat in the logged-in WeChat client. JSON on stdout, diagnostics on stderr.
+// wechat-cli: local CLI for any chat in the logged-in WeChat client. JSON on stdout, diagnostics on stderr.
 import AppKit
 import Foundation
 
@@ -303,7 +303,11 @@ func export() throws {
         guard let chat = row["chat"] as? String else { continue }
         var csv = "\u{FEFF}" + columns.joined(separator: ",") + "\n"  // the BOM makes Excel read Chinese correctly
         let rows = try store.run("SELECT \(columns.joined(separator: ",")) FROM messages WHERE chat=? ORDER BY pos", [chat])
-        for r in rows { csv += columns.map { field(r[$0]) }.joined(separator: ",") + "\n" }
+        for r in rows {
+            var row = r
+            row["image_path"] = absoluteImage(r["image_path"])
+            csv += columns.map { field(row[$0]) }.joined(separator: ",") + "\n"
+        }
         let safe = chat.replacingOccurrences(of: #"[/:\\]"#, with: "_", options: .regularExpression)
         let name = (safe == chat ? safe : safe + "-" + sha(chat).prefix(8)) + ".csv"
         let url = out.appendingPathComponent(name)
@@ -314,13 +318,79 @@ func export() throws {
     }
 }
 
+func eventRows(_ store: Store, after: Int, limit: Int) throws -> [[String: Any]] {
+    try store.run("SELECT * FROM events WHERE cursor>? ORDER BY cursor LIMIT ?", [after, limit]).map { row in
+        var e = row
+        if let s = e["is_self"] as? Int { e["is_self"] = s == 1 }
+        e["image_path"] = absoluteImage(e["image_path"])
+        return e
+    }
+}
+
 func events() throws {
     let after = Int(flag("after") ?? "0") ?? 0
     let limit = Int(flag("limit") ?? "1000") ?? 1000
-    for var e in try Store().run("SELECT * FROM events WHERE cursor>? ORDER BY cursor LIMIT ?", [after, limit]) {
-        if let s = e["is_self"] as? Int { e["is_self"] = s == 1 }
-        emit(e)
+    let store = try Store()
+    if CommandLine.arguments.contains("--latest") {
+        emit(["cursor": try store.run("SELECT COALESCE(MAX(cursor), 0) c FROM events").first?["c"]])
+        return
     }
+    guard CommandLine.arguments.contains("--follow") else {
+        for e in try eventRows(store, after: after, limit: limit) { emit(e) }
+        return
+    }
+    // Sleeps until watch commits new rows, with no polling. Registered before the first read, so nothing is missed.
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in followWake.signal() },
+                                    eventsNotification as CFString, nil, .deliverImmediately)
+    let start = after
+    Thread.detachNewThread {
+        var cursor = start
+        while true {
+            autoreleasepool {
+                guard let rows = try? eventRows(store, after: cursor, limit: limit) else { exit(1) }
+                for e in rows {
+                    emit(e)
+                    cursor = e["cursor"] as? Int ?? cursor
+                }
+            }
+            followWake.wait()
+        }
+    }
+    CFRunLoopRun()
+}
+
+let followWake = DispatchSemaphore(value: 0)
+
+func messageOutput(_ row: [String: Any]) -> [String: Any] {
+    var m = row
+    if let s = m["is_self"] as? Int { m["is_self"] = s == 1 }
+    m["image_path"] = absoluteImage(m["image_path"])
+    return m
+}
+
+let messageColumns = "chat, sender, is_self, type, text, image_path, displayed_time, sent_minute"
+
+/// Saved history for one chat, oldest first, from SQLite only.
+func history() throws {
+    let name = try required("chat")
+    let limit = Int(flag("limit") ?? "100") ?? 100
+    let rows = try Store().run("""
+    SELECT \(messageColumns) FROM (SELECT * FROM messages WHERE chat=? ORDER BY pos DESC LIMIT ?) ORDER BY pos
+    """, [name, limit])
+    for r in rows { emit(messageOutput(r)) }
+}
+
+/// Finds saved messages by text, newest first, from SQLite only.
+func search() throws {
+    let query = try required("query")
+    let limit = Int(flag("limit") ?? "50") ?? 50
+    let rows: [[String: Any]]
+    if let chat = flag("chat") {
+        rows = try Store().run("SELECT \(messageColumns) FROM messages WHERE chat=? AND instr(text, ?)>0 ORDER BY pos DESC LIMIT ?", [chat, query, limit])
+    } else {
+        rows = try Store().run("SELECT \(messageColumns) FROM messages WHERE instr(text, ?)>0 ORDER BY id DESC LIMIT ?", [query, limit])
+    }
+    for r in rows { emit(messageOutput(r)) }
 }
 
 let allChats = "*"  // chat_key of a gap that affects every chat
@@ -517,6 +587,8 @@ do {
     case "watch": try watch()
     case "events": try events()
     case "backfill": try backfill()
+    case "history": try history()
+    case "search": try search()
     case "windows":
         for w in wechatWindows() {
             let main = isMainWindow(w)
@@ -529,7 +601,7 @@ do {
     case "export": try export()
     case "selftest": selftest(); log("selftest passed")
     default:
-        log("usage: wechat-adapter start|status|chats|read|send|watch|events|backfill|export|windows|detach")
+        log("usage: wechat-cli start|status|chats|read|send|watch|events|history|search|backfill|export|windows|detach")
         exit(64)
     }
 } catch {

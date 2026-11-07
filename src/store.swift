@@ -3,7 +3,7 @@ import Foundation
 import SQLite3
 
 let dataDir = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Application Support/wechat-adapter")
+    .appendingPathComponent("Library/Application Support/wechat-cli")
 
 func ensureDataDir() throws {
     try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true,
@@ -17,6 +17,8 @@ struct Failure: Error {
 
 final class Store {
     private var db: OpaquePointer?
+    private var inTransaction = false
+    private var eventsWritten = false
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     init() throws {
@@ -85,7 +87,14 @@ final class Store {
 
     func transaction(_ body: () throws -> Void) throws {
         try run("BEGIN IMMEDIATE")
+        inTransaction = true
+        defer { inTransaction = false }
         do { try body(); try run("COMMIT") } catch { _ = try? run("ROLLBACK"); throw error }
+        if eventsWritten { eventsWritten = false; postEventsNotification() }
+    }
+
+    private func eventAdded() {
+        if inTransaction { eventsWritten = true } else { postEventsNotification() }
     }
 
     func addMessage(_ m: Message, chat: String, imagePath: String?) throws {
@@ -93,6 +102,7 @@ final class Store {
         INSERT INTO events(event_id,kind,chat_key,sender_display_name,is_self,message_type,text,observed_at,displayed_time,image_path)
         VALUES(?,'message',?,?,?,?,?,?,?,?)
         """, [UUID().uuidString, chat, m.sender, m.isSelf, m.type, m.text, now(), m.displayedTime, imagePath])
+        eventAdded()
     }
 
     /// Which messages in a window are missing from saved history, split by which end they belong to.
@@ -177,6 +187,7 @@ final class Store {
     func addGap(chat: String, reason: String) throws {
         try run("INSERT INTO events(event_id,kind,chat_key,observed_at,reason) VALUES(?,'gap',?,?,?)",
                 [UUID().uuidString, chat, now(), reason])
+        eventAdded()
     }
 
     func state(_ chat: String) throws -> (rowHash: String, snapshot: [String])? {
@@ -191,5 +202,18 @@ final class Store {
 }
 
 let sharedStore = try? Store()
+
+/// Stored paths are relative to the data folder. Output gives the absolute path, so it can be opened directly.
+func absoluteImage(_ value: Any?) -> Any {
+    guard let path = value as? String else { return NSNull() }
+    return dataDir.appendingPathComponent(path).path
+}
+
+/// Tells anything following the event queue that new rows are committed. Carries no data.
+let eventsNotification = "local.wechat-cli.events"
+
+func postEventsNotification() {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName(eventsNotification as CFString), nil, nil, true)
+}
 
 func now() -> String { ISO8601DateFormatter().string(from: Date()) }

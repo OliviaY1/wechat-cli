@@ -1,4 +1,4 @@
-# macOS WeChat Adapter Requirements
+# macOS WeChat CLI Requirements
 
 ## Goal
 
@@ -57,14 +57,14 @@ Messages are text or images. Links and replies are saved as text, and stickers a
 ## Local Interface
 
 ```text
-wechat-adapter status
-wechat-adapter chats
-wechat-adapter read --chat "Test Group" --limit 20
-wechat-adapter send --chat "File Transfer" --text "Test" --request-id test-001
-wechat-adapter watch
-wechat-adapter events --after <cursor>
-wechat-adapter backfill --chats 10 --last 100
-wechat-adapter export --out <folder>
+wechat-cli status
+wechat-cli chats
+wechat-cli read --chat "Test Group" --limit 20
+wechat-cli send --chat "File Transfer" --text "Test" --request-id test-001
+wechat-cli watch
+wechat-cli events --after <cursor>
+wechat-cli backfill --chats 10 --last 100
+wechat-cli export --out <folder>
 ```
 
 Use JSON/JSONL on stdout and diagnostics on stderr. Open no network ports by default. Keep event storage private to the local user; omit message bodies and full accessibility trees from routine logs.

@@ -334,7 +334,7 @@ struct UI {
             let url = folder.appendingPathComponent(UUID().uuidString + "." + imageExtension(png))
             if (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
                FileManager.default.createFile(atPath: url.path, contents: png, attributes: [.posixPermissions: 0o600]) {
-                path = url.path
+                path = "images/" + url.lastPathComponent  // relative, so the data folder can move
             }
         }
         // A newer copy by the user wins, so the old clipboard only returns if nothing changed since ours.
@@ -436,7 +436,7 @@ private func doubleClick(_ row: ChatRow, ui: UI, name: String) throws {
 func openChat(_ name: String, tail: Int? = nil) throws -> (ui: UI, cells: [Cell]) {
     let ui = try UI.locate()
     // Debug switch: exercises the search path with a chat that is in the list.
-    let forceSearch = ProcessInfo.processInfo.environment["WECHAT_ADAPTER_FORCE_SEARCH"] != nil
+    let forceSearch = ProcessInfo.processInfo.environment["WECHAT_CLI_FORCE_SEARCH"] != nil
     var row: ChatRow?
     do {
         if !forceSearch { row = try ui.findRow(name) }

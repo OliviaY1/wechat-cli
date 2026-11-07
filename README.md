@@ -1,4 +1,4 @@
-# wechat-adapter
+# wechat-cli
 
 Local CLI for any chat in the logged-in macOS WeChat client. It uses macOS Accessibility only. JSON goes to stdout and diagnostics go to stderr. It opens no network ports. Sending doesn't use the clipboard. Saving an image copies it from WeChat's viewer, then restores your clipboard unless you copied something newer.
 
@@ -11,34 +11,42 @@ Tested on macOS 26.6.2 with WeChat 3.8.10 (build 28633), English UI.
 3. Build and check:
 
 ```sh
-swiftc -O src/*.swift -o wechat-adapter
-./wechat-adapter selftest
-./wechat-adapter status
+swiftc -O src/*.swift -o wechat-cli
+./wechat-cli selftest
+./wechat-cli status
 ```
 
-There is no allowlist. `--chat` takes the chat's exact display name, and `chat_key` in the output is that name. A missing name, or one matching more than one row, is rejected. Data is stored in `~/Library/Application Support/wechat-adapter/`.
+There is no allowlist. `--chat` takes the chat's exact display name, and `chat_key` in the output is that name. A missing name, or one matching more than one row, is rejected. Data is stored in `~/Library/Application Support/wechat-cli/`.
 
 ## Commands
 
 ```text
-wechat-adapter start
-wechat-adapter status
-wechat-adapter chats
-wechat-adapter read --chat "File Transfer" --limit 20
-wechat-adapter send --chat "File Transfer" --text "Test" --request-id test-001
-wechat-adapter watch [--interval 2]
-wechat-adapter events [--after <cursor>] [--limit 1000]
-wechat-adapter backfill --chats 10 --last 100
-wechat-adapter backfill --chat "File Transfer" --last all
-wechat-adapter export --out <folder>
-wechat-adapter windows
-wechat-adapter detach --chat "File Transfer"
-wechat-adapter backfill --chat "File Transfer" --detached --last 100
+wechat-cli start
+wechat-cli status
+wechat-cli chats
+wechat-cli read --chat "File Transfer" --limit 20
+wechat-cli send --chat "File Transfer" --text "Test" --request-id test-001
+wechat-cli watch [--interval 2]
+wechat-cli events [--after <cursor>] [--limit 1000]
+wechat-cli events --after <cursor> --follow
+wechat-cli events --latest
+wechat-cli history --chat "File Transfer" --limit 100
+wechat-cli search --query "text" [--chat "File Transfer"]
+wechat-cli backfill --chats 10 --last 100
+wechat-cli backfill --chat "File Transfer" --last all
+wechat-cli export --out <folder>
+wechat-cli windows
+wechat-cli detach --chat "File Transfer"
+wechat-cli backfill --chat "File Transfer" --detached --last 100
 ```
 
 `send` returns `local_echo_confirmed`, `unknown`, `failed` or `duplicate_request`. A request ID is never reused, even after `failed`, so a retry needs a new ID. Never retry `unknown` automatically: the message may have gone out. Local echo doesn't prove remote delivery.
 
 `chats` lists names from the chat list. A name containing a comma with no space after it comes back cut short.
+
+`events --follow` keeps running. It prints anything after the cursor, then sleeps until `watch` signals new rows through a macOS notification, with no polling.
+
+`history` and `search` read SQLite only and never touch WeChat.
 
 `events` returns `kind: "message"` or `kind: "gap"`. A gap means coverage may be incomplete, and its `reason` says why. `chat_key: "*"` means the gap affects every chat. Save the last `cursor` you processed and pass it to `--after`.
 
@@ -53,7 +61,7 @@ If WeChat is logged out, stderr prints `it's logged out`. `status` also reports 
 All messages go into the `messages` table in `events.db`: chat, sender, is_self, type, text, image_path, displayed_time and sent_minute. `watch` adds new messages and `backfill` adds older ones, to the same table. Rerunning either doesn't add duplicates.
 
 - **Types:** every message is `text` or `image`. Links and replies are stored as text, and a reply's text includes the quoted part. Stickers and unknown cells are skipped.
-- **Images:** saved in `images/` in the data folder, as `.jpg`, `.png` or `.gif`, with the absolute path in `image_path`. `backfill` and `watch` open each image in WeChat's viewer to copy it, which takes a few seconds and shows a window briefly. A failed image keeps `image_path` null. `watch` only saves images for new messages.
+- **Images:** saved in `images/` in the data folder, as `.jpg`, `.png` or `.gif`, with `images/<file>` stored relative to the data folder. Command output gives the absolute path. `backfill` and `watch` open each image in WeChat's viewer to copy it, which takes a few seconds and shows a window briefly. A failed image keeps `image_path` null. `watch` only saves images for new messages.
 - **Time:** `sent_minute` is local `yyyy-MM-dd HH:mm`, worked out from WeChat's time label. A label covers the messages after it, so it's approximate. An unrecognized label gives null, and `displayed_time` keeps the original.
 - **`backfill`:** `--last` is a number or `all`, 100 by default. It stops scrolling once it has enough. `--chats N` takes the first N rows of the chat list, which reorders as messages arrive.
 - **`export`:** writes one CSV per chat. A cell starting with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet won't run it as a formula.
@@ -109,6 +117,7 @@ Messages were sent only to File Transfer.
 | LRU limit: 5 windows, least recently used closed first, main window never closed | Pass |
 | Group detached windows are recognized (`<chat>(<members>)(Window)`) | Pass |
 | Sender labels in 4 group detached windows: all 79 text messages had a sender, 3 distinct senders per group including `Me` | Pass |
+| `events --follow` printed a new message 0.39 s after the send confirmed, with no CPU use while waiting | Pass |
 | Real `backfill --detached --last 100` on File Transfer with a send through the main window partway: 100 saved in 44 s, 11 images, rows kept loading during the send | Pass |
 | Unknown chat name rejected | Pass |
 | Switching between File Transfer and another chat, both ways (about 1.9 s) | Pass |
